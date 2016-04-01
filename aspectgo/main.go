@@ -1,8 +1,9 @@
 package main
 
 import (
-	"golang.org/x/exp/aspectgo/compiler/cli"
 	"os"
+
+	"golang.org/x/exp/aspectgo/compiler/cli"
 )
 
 func main() {

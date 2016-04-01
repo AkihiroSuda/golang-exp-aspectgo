@@ -1,3 +1,4 @@
+// Package parse provides the aspect parser.
 package parse
 
 import (
@@ -12,6 +13,7 @@ import (
 
 const aspectPackagePath = "golang.org/x/exp/aspectgo/aspect"
 
+// AspectFile is the type for an aspect file.
 type AspectFile struct {
 	Filename  string
 	Program   *loader.Program
@@ -19,6 +21,7 @@ type AspectFile struct {
 	Pointcuts map[*types.Named]aspect.Pointcut
 }
 
+// ParseAspectFile parses an aspect file.
 func ParseAspectFile(aspectFilename string) (*AspectFile, error) {
 	prog, pkgInfo, err := _parseAspectFile(aspectFilename)
 	if err != nil {
@@ -73,7 +76,7 @@ func _parseAspectFile(aspectFilename string) (*loader.Program, *loader.PackageIn
 }
 
 func lookupAspects(pkg *types.Package, aspectIntf *types.Named) ([]*types.Named, error) {
-	result := make([]*types.Named, 0)
+	var result []*types.Named
 	for _, name := range pkg.Scope().Names() {
 		obj := pkg.Scope().Lookup(name)
 		if fObj, ok := obj.(*types.Func); ok {
@@ -97,19 +100,19 @@ func lookupAspects(pkg *types.Package, aspectIntf *types.Named) ([]*types.Named,
 }
 
 func lookupAspectInterface(program *loader.Program) (*types.Named, error) {
-	for pkg, _ := range program.AllPackages {
+	for pkg := range program.AllPackages {
 		if pkg.Path() == aspectPackagePath {
 			obj := pkg.Scope().Lookup("Aspect")
 			tObj, ok := obj.(*types.TypeName)
 			if !ok {
-				return nil, fmt.Errorf("invalid Aspect definition (not *types.TypeName)")
+				return nil, fmt.Errorf("invalid aspect definition (not *types.TypeName)")
 			}
 			named, ok := tObj.Type().(*types.Named)
 			if !ok {
-				return nil, fmt.Errorf("invalid Aspect definition (not *types.Named)")
+				return nil, fmt.Errorf("invalid aspect definition (not *types.Named)")
 			}
 			if !types.IsInterface(named) {
-				return nil, fmt.Errorf("invalid Aspect definition (not interface)")
+				return nil, fmt.Errorf("invalid aspect definition (not interface)")
 			}
 			return named, nil
 		}

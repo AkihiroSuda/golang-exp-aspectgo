@@ -4,13 +4,13 @@ package rt
 
 // ContextImpl implements aspect.Context
 type ContextImpl struct {
-	// should NOT be accessed manually.
+	// XArgs should NOT be accessed manually.
 	XArgs []interface{}
 
-	// should NOT be accessed manually.
+	// XFunc should NOT be accessed manually.
 	XFunc func(args []interface{}) []interface{}
 
-	// should NOT be accessed manually.
+	// XReceiver should NOT be accessed manually.
 	XReceiver interface{}
 }
 

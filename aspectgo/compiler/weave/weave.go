@@ -1,31 +1,36 @@
+// Package weave provides the weaver.
 package weave
 
 import (
 	"go/ast"
 	"go/parser"
 	"go/types"
+	"log"
 	"strings"
 
-	log "github.com/cihub/seelog"
 	"golang.org/x/tools/go/loader"
 
 	"golang.org/x/exp/aspectgo/aspect"
 	"golang.org/x/exp/aspectgo/compiler/parse"
+	"golang.org/x/exp/aspectgo/compiler/util"
 	"golang.org/x/exp/aspectgo/compiler/weave/match"
 )
 
+// Weave weaves aspect files to the target package and emit the woven files to wovenGOPATH.
 func Weave(wovenGOPATH string, target string, af *parse.AspectFile) ([]string, error) {
 	_, prog, err := loadTarget(target)
 	if err != nil {
 		return nil, err
 	}
-	matched, pointcutsById, err := findMatchedThings(prog, af.Pointcuts)
+	matched, pointcutsByIdent, err := findMatchedThings(prog, af.Pointcuts)
 	if err != nil {
 		return nil, err
 	}
-	log.Debugf("Found %d matches", len(matched))
-	if len(matched) != len(pointcutsById) {
-		panic(log.Critical("impl error"))
+	if util.DebugMode {
+		log.Printf("Found %d matches", len(matched))
+	}
+	if len(matched) != len(pointcutsByIdent) {
+		log.Fatal("impl error")
 	}
 	if len(matched) == 0 {
 		return []string{}, nil
@@ -35,18 +40,16 @@ func Weave(wovenGOPATH string, target string, af *parse.AspectFile) ([]string, e
 	if err != nil {
 		return nil, err
 	}
-	// log.Debugf("Rewrote files (aspect): %s", rewrittenFnames1)
 	rw := &rewriter{
 		Program:          prog,
 		Matched:          matched,
 		Aspects:          pointcutMapToAspectMap(af.Pointcuts),
-		PointcutsByIdent: pointcutsById,
+		PointcutsByIdent: pointcutsByIdent,
 	}
 	rewrittenFnames2, err := rewriteProgram(wovenGOPATH, rw)
 	if err != nil {
 		return nil, err
 	}
-	// log.Debugf("Rewrote files (target program): %s", rewrittenFnames1)
 	return append(rewrittenFnames1, rewrittenFnames2...), nil
 }
 
@@ -55,7 +58,7 @@ func pointcutMapToAspectMap(pointcuts map[*types.Named]aspect.Pointcut) map[aspe
 	for asp, pc := range pointcuts {
 		x, ok := aspects[pc]
 		if ok {
-			log.Warnf("pointcut conflict: %s vs %s", x, asp)
+			log.Printf("pointcut conflict: %s vs %s", x, asp)
 		}
 		aspects[pc] = asp
 	}
@@ -64,7 +67,7 @@ func pointcutMapToAspectMap(pointcuts map[*types.Named]aspect.Pointcut) map[aspe
 
 func findMatchedThings(prog *loader.Program, pointcuts map[*types.Named]aspect.Pointcut) (map[*ast.Ident]types.Object, map[*ast.Ident]aspect.Pointcut, error) {
 	objs := make(map[*ast.Ident]types.Object)
-	pointcutsById := make(map[*ast.Ident]aspect.Pointcut)
+	pointcutsByIdent := make(map[*ast.Ident]aspect.Pointcut)
 	for _, pkgInfo := range prog.InitialPackages() {
 		for id, obj := range pkgInfo.Uses {
 			posn := prog.Fset.Position(id.Pos())
@@ -76,21 +79,23 @@ func findMatchedThings(prog *loader.Program, pointcuts map[*types.Named]aspect.P
 				if !matched {
 					continue
 				}
-				log.Debugf("MATCHED %s:%d:%d: %s, pointcut=%s",
-					posn.Filename, posn.Line, posn.Column,
-					obj, pointcut)
+				if util.DebugMode {
+					log.Printf("MATCHED %s:%d:%d: %s, pointcut=%s",
+						posn.Filename, posn.Line, posn.Column,
+						obj, pointcut)
+				}
 				objs[id] = obj
-				xpt, ok := pointcutsById[id]
+				xpt, ok := pointcutsByIdent[id]
 				if ok {
-					log.Warnf("OVERRIDE %s:%d:%d: %s, pointcut=%s vs old=%s",
+					log.Printf("OVERRIDE %s:%d:%d: %s, pointcut=%s vs old=%s",
 						posn.Filename, posn.Line, posn.Column,
 						obj, pointcut, xpt)
 				}
-				pointcutsById[id] = pointcut
+				pointcutsByIdent[id] = pointcut
 			}
 		}
 	}
-	return objs, pointcutsById, nil
+	return objs, pointcutsByIdent, nil
 }
 
 func loadTarget(target string) (*loader.Config, *loader.Program, error) {

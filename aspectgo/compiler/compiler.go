@@ -2,10 +2,10 @@
 package compiler
 
 import (
+	"errors"
 	"fmt"
+	"log"
 	"os"
-
-	log "github.com/cihub/seelog"
 
 	"golang.org/x/exp/aspectgo/compiler/gopath"
 	"golang.org/x/exp/aspectgo/compiler/parse"
@@ -14,25 +14,25 @@ import (
 
 // Compiler is the type for the AspectGo compiler.
 type Compiler struct {
-	// GOPATH for woven packages
+	// WovenGOPATH is the GOPATH for woven packages
 	WovenGOPATH string
 
-	// target package name
+	// Target is the target package name
 	Target string
 
-	// aspect file names.
+	// AspectFilenames are aspect file names.
 	// currently, only single aspect file is supported
 	AspectFilenames []string
 }
 
 // Do does all the compilation phases.
 func (c *Compiler) Do() error {
-	log.Infof("Phase 0: Checking arguments")
+	log.Printf("Phase 0: Checking arguments")
 	if c.WovenGOPATH == "" {
-		return fmt.Errorf("WovenGOPATH not specified")
+		return errors.New("WovenGOPATH not specified")
 	}
 	if c.Target == "" {
-		return fmt.Errorf("Target not specified")
+		return errors.New("Target not specified")
 	}
 	if len(c.AspectFilenames) != 1 {
 		return fmt.Errorf("only single aspect file is supported at the moment: %v", c.AspectFilenames)
@@ -40,26 +40,26 @@ func (c *Compiler) Do() error {
 	aspectFilename := c.AspectFilenames[0]
 	oldGOPATH := os.Getenv("GOPATH")
 	if oldGOPATH == "" {
-		return fmt.Errorf("GOPATH not set")
+		return errors.New("GOPATH not set")
 	}
 
-	log.Infof("Phase 1: Parsing the aspects")
+	log.Printf("Phase 1: Parsing the aspects")
 	aspectFile, err := parse.ParseAspectFile(aspectFilename)
 	if err != nil {
 		return err
 	}
 
-	log.Infof("Phase 2: Weaving the aspects to the target package")
+	log.Printf("Phase 2: Weaving the aspects to the target package")
 	writtenFnames, err := weave.Weave(c.WovenGOPATH, c.Target, aspectFile)
 	if err != nil {
 		return err
 	}
 	if len(writtenFnames) == 0 {
-		log.Warnf("Nothing to do")
+		log.Printf("Nothing to do")
 		return nil
 	}
 
-	log.Infof("Phase 3: Fixing up GOPATH")
+	log.Printf("Phase 3: Fixing up GOPATH")
 	err = gopath.FixUp(oldGOPATH, c.WovenGOPATH, writtenFnames)
 	if err != nil {
 		return err

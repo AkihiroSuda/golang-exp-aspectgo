@@ -1,3 +1,4 @@
+// Package gopath provides GOPATH-related utilities.
 package gopath
 
 import (
@@ -6,9 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	// log "github.com/cihub/seelog"
 )
 
+// FileForNewGOPATH returns the path for new wovenGOPATH.
 func FileForNewGOPATH(s, oldGOPATH, wovenGOPATH string) (*os.File, error) {
 	n := strings.Replace(s, oldGOPATH, wovenGOPATH, 1)
 	d := filepath.Dir(n)
@@ -30,9 +31,8 @@ func exists(name string) (bool, error) {
 	_, err := os.Stat(name)
 	if !os.IsNotExist(err) {
 		return true, nil
-	} else {
-		return false, err
 	}
+	return false, err
 }
 
 func isDir(name string) (bool, error) {
@@ -80,6 +80,9 @@ ret:
 	return act, ocFullName, wcFullName, nil
 }
 
+// FixUp fixes up GOPATH after the weaving phase.
+// It makes some symbolic links from wovenDir to oldDir so that
+// the woven package can be built with wovenDir as GOPATH.
 func FixUp(oldDir, wovenDir string, writtenFnames []string) error {
 	ochildren, err := ioutil.ReadDir(oldDir)
 	if err != nil {
@@ -90,8 +93,6 @@ func FixUp(oldDir, wovenDir string, writtenFnames []string) error {
 		if err != nil {
 			return err
 		}
-		// log.Debugf("FixUp action=%s for %s, %s",
-		// 	act, ocFullName, wcFullName)
 		switch act {
 		case symlink:
 			wgExists, _ := exists(wovenDir)

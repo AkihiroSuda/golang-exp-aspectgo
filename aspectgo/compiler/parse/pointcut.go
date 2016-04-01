@@ -5,12 +5,11 @@ import (
 	"fmt"
 	"go/types"
 	"io/ioutil"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"text/template"
-
-	log "github.com/cihub/seelog"
 
 	"golang.org/x/exp/aspectgo/aspect"
 	"golang.org/x/exp/aspectgo/compiler/consts"
@@ -114,14 +113,13 @@ func runTmpAspectMain(dir string) (string, error) {
 	cmd.Stderr = &stderr
 	cmd.Dir = dir
 	if err := cmd.Run(); err != nil {
-		log.Errorf("%s", stderr.String())
 		return "",
-			fmt.Errorf("error while executing %s %s at %s: %s",
-				cmdName, arg, dir, err)
+			fmt.Errorf("error while executing %s %s at %s: %s: %s",
+				cmdName, arg, dir, err, stderr.String())
 	}
 	stdoutS := stdout.String()
 	if stdoutS != "" {
-		log.Debugf("got stdout: %s", stdoutS)
+		log.Printf("got stdout: %s", stdoutS)
 	}
 	result, err := ioutil.ReadFile(filepath.Join(dir, "result.txt"))
 	if err != nil {

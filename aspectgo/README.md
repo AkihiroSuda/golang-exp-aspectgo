@@ -20,7 +20,7 @@ Your suggestion and PR are welcome.
 ## Install
 
     $ git clone https://github.com/AkihiroSuda/golang-exp-aspectgo.git
-    $ ln -s $(pwd)/golang-exp-aspectgo $GOPATH/src/golang.org/exp/aspectgo
+    $ ln -s $(pwd)/golang-exp-aspectgo $GOPATH/src/golang.org/x/exp
     $ go build golang.org/x/exp/aspectgo
 
 ## Example
@@ -29,7 +29,7 @@ Your suggestion and PR are welcome.
     hello
     $ aspectgo \
       -w /tmp/wovengopath \                         # output gopath
-      -t golang.org/x/exp/aspectgo/example/hello \   # target package
+      -t golang.org/x/exp/aspectgo/example/hello \  # target package
       example/hello/main_aspect.go                  # aspect file
     $ GOPATH=/tmp/wovengopath go build golang.org/x/exp/aspectgo/example/hello && ./hello
     BEFORE hello
