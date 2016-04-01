@@ -18,6 +18,7 @@ import (
 	"golang.org/x/exp/aspectgo/aspect"
 	"golang.org/x/exp/aspectgo/compiler/consts"
 	"golang.org/x/exp/aspectgo/compiler/gopath"
+	"golang.org/x/exp/aspectgo/compiler/util"
 )
 
 func rewriteProgram(wovenGOPATH string, rw *rewriter) ([]string, error) {
@@ -30,7 +31,9 @@ func rewriteProgram(wovenGOPATH string, rw *rewriter) ([]string, error) {
 	}
 	var rewrittenFnames []string
 	for _, pkgInfo := range rw.Program.InitialPackages() {
+		rw.currentPkg = pkgInfo.Pkg
 		for _, file := range pkgInfo.Files {
+			rw.currentFile = file
 			posn := rw.Program.Fset.Position(file.Pos())
 			if strings.HasSuffix(posn.Filename, "_aspect.go") {
 				continue
@@ -47,7 +50,7 @@ func rewriteProgram(wovenGOPATH string, rw *rewriter) ([]string, error) {
 			outw := bufio.NewWriter(outf)
 			outw.Write([]byte(consts.AutogenFileHeader))
 			format.Node(outw, rw.Program.Fset, rewritten)
-			for _, add := range rw.AddendumForLastASTFile() {
+			for _, add := range rw.AddendumForASTFile() {
 				outw.Write([]byte("\n"))
 				format.Node(outw, rw.Program.Fset, add)
 				outw.Write([]byte("\n"))
@@ -67,8 +70,17 @@ type rewriter struct {
 	Matched          map[*ast.Ident]types.Object
 	Aspects          map[aspect.Pointcut]*types.Named
 	PointcutsByIdent map[*ast.Ident]aspect.Pointcut
-	fileAddendum     []ast.Node
-	proxyExprs       map[*ast.Ident]ast.Expr
+	// fileAddendum is set by rewriter.Rewrite().
+	// rewriteProgram() uses rewriter.AddendumForASTFile()
+	// as a getter.
+	fileAddendum []ast.Node
+	proxyExprs   map[*ast.Ident]ast.Expr
+	// currentPkg is set by the loop in rewriteProgram().
+	// It is used for rewriter.typeString().
+	currentPkg *types.Package
+	// currentFile is set by the loop in rewriteProgram().
+	// It is used for rewriter.typeString().
+	currentFile *ast.File
 }
 
 func (r *rewriter) init() error {
@@ -110,7 +122,7 @@ func (r *rewriter) _proxy_decl(node ast.Node, matched types.Object, proxyName st
 		param := &ast.Field{
 			Names: []*ast.Ident{ast.NewIdent(x.Name)},
 			Type: &ast.ParenExpr{
-				X: ast.NewIdent(r.typeString(sig.Recv().Type(), matched.Pkg())),
+				X: ast.NewIdent(r.typeString(sig.Recv().Type())),
 			}}
 		params.List = append(params.List, param)
 	}
@@ -118,7 +130,7 @@ func (r *rewriter) _proxy_decl(node ast.Node, matched types.Object, proxyName st
 		sigParam := sig.Params().At(i)
 		param := &ast.Field{}
 		param.Names = []*ast.Ident{ast.NewIdent(sigParam.Name())}
-		paramTypeStr := r.typeString(sigParam.Type(), matched.Pkg())
+		paramTypeStr := r.typeString(sigParam.Type())
 		if sig.Variadic() {
 			paramTypeStr = strings.Replace(paramTypeStr, "[]", "...", 1)
 		}
@@ -129,7 +141,7 @@ func (r *rewriter) _proxy_decl(node ast.Node, matched types.Object, proxyName st
 		sigResult := sig.Results().At(i)
 		result := &ast.Field{}
 		result.Names = []*ast.Ident{ast.NewIdent(sigResult.Name())}
-		result.Type = ast.NewIdent(r.typeString(sigResult.Type(), matched.Pkg()))
+		result.Type = ast.NewIdent(r.typeString(sigResult.Type()))
 		results.List = append(results.List, result)
 	}
 	funcDecl.Type.Params, funcDecl.Type.Results = params, results
@@ -155,7 +167,7 @@ func (r *rewriter) _proxy_body_XFunc(node ast.Node, matched types.Object) *ast.F
 	for i := 0; i < sig.Params().Len(); i++ {
 		sigParam := sig.Params().At(i)
 		lhsName := fmt.Sprintf("_ag_arg%d", i)
-		rhsType := ast.NewIdent(r.typeString(sigParam.Type(), matched.Pkg()))
+		rhsType := ast.NewIdent(r.typeString(sigParam.Type()))
 		xFuncBodyArgExprs = append(xFuncBodyArgExprs,
 			ast.NewIdent(lhsName))
 		assignStmt := &ast.AssignStmt{
@@ -335,7 +347,7 @@ func (r *rewriter) _proxy_body(node ast.Node, matched types.Object, asp *types.N
 							Kind:  token.INT,
 							Value: fmt.Sprintf("%d", i),
 						}},
-					Type: ast.NewIdent(r.typeString(sigResult.Type(), matched.Pkg()))}}}
+					Type: ast.NewIdent(r.typeString(sigResult.Type()))}}}
 		resAssignStmts = append(resAssignStmts, stmt)
 		resExprs = append(resExprs, ast.NewIdent(fmt.Sprintf("_ag_res%d", i)))
 	}
@@ -369,7 +381,7 @@ func (r *rewriter) _pgen_decl(matched types.Object, pdecl *ast.FuncDecl, pgenNam
 	if receiver != nil {
 		pdeclRecv := pdecl.Type.Params.List[0]
 		name := pdeclRecv.Names[0].Name
-		typ := r.typeString(receiver.Type(), matched.Pkg())
+		typ := r.typeString(receiver.Type())
 		param := &ast.Field{
 			Names: []*ast.Ident{ast.NewIdent(name)},
 			Type: &ast.ParenExpr{
@@ -493,7 +505,8 @@ func (r *rewriter) _proxy_fix_up(node ast.Node, matched types.Object, pgenName s
 	sig := matched.Type().(*types.Signature)
 	var args []ast.Expr
 	if sig.Recv() != nil {
-		// FIXME: not sure this assertion is robust
+		log.Printf("recv=%s", sig.Recv())
+		_, recvIsPointer := sig.Recv().Type().Underlying().(*types.Pointer)
 		// FIXME: not sure this assertion is robust
 		xs, ok := node.(*ast.SelectorExpr)
 		if !ok {
@@ -503,7 +516,14 @@ func (r *rewriter) _proxy_fix_up(node ast.Node, matched types.Object, pgenName s
 		if !ok {
 			log.Fatalf("impl error: node=%s, recv=%s", node, sig.Recv())
 		}
-		args = append(args, ast.NewIdent(x.Name))
+		var arg ast.Expr
+		if recvIsPointer {
+			// FIXME: I believe this is not robust
+			arg = ast.NewIdent("&" + x.Name)
+		} else {
+			arg = ast.NewIdent(x.Name)
+		}
+		args = append(args, arg)
 	}
 	callExpr := &ast.CallExpr{
 		Fun:  ast.NewIdent(pgenName),
@@ -563,7 +583,7 @@ func (r *rewriter) Rewrite(node ast.Node) (ast.Node, rewrite.Rewriter) {
 				Name: ast.NewIdent("aspectrt"),
 				Path: &ast.BasicLit{
 					Kind:  token.STRING,
-					Value: "\"golang.org/x/exp/aspectgo/aspect/rt\"",
+					Value: "\"" + consts.AspectGoPackagePath + "/aspect/rt\"",
 				}},
 			&ast.ImportSpec{
 				Path: &ast.BasicLit{
@@ -604,11 +624,16 @@ nop:
 	return node, r
 }
 
-func (r *rewriter) AddendumForLastASTFile() []ast.Node {
+func (r *rewriter) AddendumForASTFile() []ast.Node {
 	return r.fileAddendum
 }
 
-func (r *rewriter) typeString(typ types.Type, pkg *types.Package) string {
-	return types.TypeString(typ,
-		types.RelativeTo(pkg))
+func (r *rewriter) typeString(typ types.Type) string {
+	s, err := util.LocalTypeString(typ,
+		r.currentPkg,
+		r.currentFile.Imports)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return s
 }

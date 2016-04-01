@@ -9,9 +9,10 @@ import (
 	"golang.org/x/tools/go/loader"
 
 	"golang.org/x/exp/aspectgo/aspect"
+	"golang.org/x/exp/aspectgo/compiler/consts"
 )
 
-const aspectPackagePath = "golang.org/x/exp/aspectgo/aspect"
+const aspectPackagePath = consts.AspectGoPackagePath + "/aspect"
 
 // AspectFile is the type for an aspect file.
 type AspectFile struct {
