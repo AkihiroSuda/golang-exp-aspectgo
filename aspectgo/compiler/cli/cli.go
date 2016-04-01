@@ -1,13 +1,17 @@
+// Package cli provides the CLI for AspectGo.
 package cli
 
 import (
 	"flag"
-
-	log "github.com/cihub/seelog"
+	"fmt"
+	"log"
+	"os"
 
 	"golang.org/x/exp/aspectgo/compiler"
+	"golang.org/x/exp/aspectgo/compiler/util"
 )
 
+// Main is the CLI for AspectGo.
 func Main(args []string) int {
 	var (
 		debug  bool
@@ -19,28 +23,34 @@ func Main(args []string) int {
 	f.StringVar(&weave, "w", "/tmp/wovengopath", "woven gopath")
 	f.StringVar(&target, "t", "", "target package name")
 	f.Parse(args[1:])
-	initLog(debug)
+
 	if target == "" {
-		log.Errorf("No target package specified")
+		fmt.Fprintf(os.Stderr, "No target package specified\n")
 		return 1
 	}
 	if f.NArg() < 1 {
-		log.Errorf("No aspect file specified")
+		fmt.Fprintf(os.Stderr, "No aspect file specified\n")
 		return 1
 	}
 	if f.NArg() >= 2 {
-		log.Errorf("Too many aspect files specified: %s", f.Args())
+		fmt.Fprintf(os.Stderr, "Too many aspect files specified: %s\n", f.Args())
 		return 1
 	}
-	aspectFile := f.Args()[0]
 
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	util.DebugMode = debug
+	if util.DebugMode {
+		log.Printf("running in debug mode")
+	}
+
+	aspectFile := f.Args()[0]
 	comp := compiler.Compiler{
 		WovenGOPATH:     weave,
 		Target:          target,
 		AspectFilenames: []string{aspectFile},
 	}
 	if err := comp.Do(); err != nil {
-		log.Error(err)
+		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
 	return 0

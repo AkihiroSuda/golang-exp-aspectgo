@@ -109,7 +109,6 @@ func TestExMultipointcut(t *testing.T) {
 	testEx(t, "multipointcut", "main.go", "main_aspect.go")
 }
 
-// TextExDetreplay does not work yet due to pkg path
-// func TestExDetreplay(t *testing.T) {
-// 	testEx(t, "detreplay", "main.go", "main_aspect.go")
-// }
+func TestExDetreplay(t *testing.T) {
+	testEx(t, "detreplay", "main.go", "main_aspect.go")
+}

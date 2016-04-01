@@ -7,16 +7,18 @@ import (
 	"go/format"
 	"go/token"
 	"go/types"
+	"log"
 	"os"
 	"strings"
 
-	log "github.com/cihub/seelog"
 	rewrite "github.com/tsuna/gorewrite"
+
 	"golang.org/x/tools/go/loader"
 
 	"golang.org/x/exp/aspectgo/aspect"
 	"golang.org/x/exp/aspectgo/compiler/consts"
 	"golang.org/x/exp/aspectgo/compiler/gopath"
+	"golang.org/x/exp/aspectgo/compiler/util"
 )
 
 func rewriteProgram(wovenGOPATH string, rw *rewriter) ([]string, error) {
@@ -27,9 +29,11 @@ func rewriteProgram(wovenGOPATH string, rw *rewriter) ([]string, error) {
 	if oldGOPATH == "" {
 		return nil, fmt.Errorf("GOPATH not set")
 	}
-	rewrittenFnames := make([]string, 0)
+	var rewrittenFnames []string
 	for _, pkgInfo := range rw.Program.InitialPackages() {
+		rw.currentPkg = pkgInfo.Pkg
 		for _, file := range pkgInfo.Files {
+			rw.currentFile = file
 			posn := rw.Program.Fset.Position(file.Pos())
 			if strings.HasSuffix(posn.Filename, "_aspect.go") {
 				continue
@@ -40,13 +44,13 @@ func rewriteProgram(wovenGOPATH string, rw *rewriter) ([]string, error) {
 				return nil, err
 			}
 			defer outf.Close()
-			log.Infof("Rewriting %s --> %s",
+			log.Printf("Rewriting %s --> %s",
 				posn.Filename, outf.Name())
 			rewritten := rewrite.Rewrite(rw, file)
 			outw := bufio.NewWriter(outf)
 			outw.Write([]byte(consts.AutogenFileHeader))
 			format.Node(outw, rw.Program.Fset, rewritten)
-			for _, add := range rw.AddendumForLastASTFile() {
+			for _, add := range rw.AddendumForASTFile() {
 				outw.Write([]byte("\n"))
 				format.Node(outw, rw.Program.Fset, add)
 				outw.Write([]byte("\n"))
@@ -66,14 +70,23 @@ type rewriter struct {
 	Matched          map[*ast.Ident]types.Object
 	Aspects          map[aspect.Pointcut]*types.Named
 	PointcutsByIdent map[*ast.Ident]aspect.Pointcut
-	fileAddendum     []ast.Node
-	proxyExprs       map[*ast.Ident]ast.Expr
+	// fileAddendum is set by rewriter.Rewrite().
+	// rewriteProgram() uses rewriter.AddendumForASTFile()
+	// as a getter.
+	fileAddendum []ast.Node
+	proxyExprs   map[*ast.Ident]ast.Expr
+	// currentPkg is set by the loop in rewriteProgram().
+	// It is used for rewriter.typeString().
+	currentPkg *types.Package
+	// currentFile is set by the loop in rewriteProgram().
+	// It is used for rewriter.typeString().
+	currentFile *ast.File
 }
 
 func (r *rewriter) init() error {
 	if r.Program == nil || r.Matched == nil ||
 		r.Aspects == nil || r.PointcutsByIdent == nil {
-		panic(log.Critical("impl error (nil args)"))
+		log.Fatal("impl error (nil args)")
 	}
 
 	// NOTE: r.fileAddendum is initialized in Rewrite():*ast.File
@@ -100,16 +113,16 @@ func (r *rewriter) _proxy_decl(node ast.Node, matched types.Object, proxyName st
 		// FIXME: not sure this assertion is robust
 		xs, ok := node.(*ast.SelectorExpr)
 		if !ok {
-			panic(log.Criticalf("impl error: node=%s, recv=%s", node, sig.Recv()))
+			log.Fatalf("impl error: node=%s, recv=%s", node, sig.Recv())
 		}
 		x, ok := xs.X.(*ast.Ident)
 		if !ok {
-			panic(log.Criticalf("impl error: node=%s, recv=%s", node, sig.Recv()))
+			log.Fatalf("impl error: node=%s, recv=%s", node, sig.Recv())
 		}
 		param := &ast.Field{
 			Names: []*ast.Ident{ast.NewIdent(x.Name)},
 			Type: &ast.ParenExpr{
-				X: ast.NewIdent(r.typeString(sig.Recv().Type(), matched.Pkg())),
+				X: ast.NewIdent(r.typeString(sig.Recv().Type())),
 			}}
 		params.List = append(params.List, param)
 	}
@@ -117,7 +130,7 @@ func (r *rewriter) _proxy_decl(node ast.Node, matched types.Object, proxyName st
 		sigParam := sig.Params().At(i)
 		param := &ast.Field{}
 		param.Names = []*ast.Ident{ast.NewIdent(sigParam.Name())}
-		paramTypeStr := r.typeString(sigParam.Type(), matched.Pkg())
+		paramTypeStr := r.typeString(sigParam.Type())
 		if sig.Variadic() {
 			paramTypeStr = strings.Replace(paramTypeStr, "[]", "...", 1)
 		}
@@ -128,7 +141,7 @@ func (r *rewriter) _proxy_decl(node ast.Node, matched types.Object, proxyName st
 		sigResult := sig.Results().At(i)
 		result := &ast.Field{}
 		result.Names = []*ast.Ident{ast.NewIdent(sigResult.Name())}
-		result.Type = ast.NewIdent(r.typeString(sigResult.Type(), matched.Pkg()))
+		result.Type = ast.NewIdent(r.typeString(sigResult.Type()))
 		results.List = append(results.List, result)
 	}
 	funcDecl.Type.Params, funcDecl.Type.Results = params, results
@@ -138,7 +151,7 @@ func (r *rewriter) _proxy_decl(node ast.Node, matched types.Object, proxyName st
 // _proxy_body_XArgs generates like this: `XArgs: []interface{}{"world"}`
 func (r *rewriter) _proxy_body_XArgs(matched types.Object) []ast.Expr {
 	sig := matched.Type().(*types.Signature)
-	xArgsExprs := make([]ast.Expr, 0)
+	var xArgsExprs []ast.Expr
 	for i := 0; i < sig.Params().Len(); i++ {
 		sigParam := sig.Params().At(i)
 		xArgsExprs = append(xArgsExprs, ast.NewIdent(sigParam.Name()))
@@ -149,12 +162,12 @@ func (r *rewriter) _proxy_body_XArgs(matched types.Object) []ast.Expr {
 
 func (r *rewriter) _proxy_body_XFunc(node ast.Node, matched types.Object) *ast.FuncLit {
 	sig := matched.Type().(*types.Signature)
-	xFuncBodyStmts := make([]ast.Stmt, 0)
-	xFuncBodyArgExprs := make([]ast.Expr, 0)
+	var xFuncBodyStmts []ast.Stmt
+	var xFuncBodyArgExprs []ast.Expr
 	for i := 0; i < sig.Params().Len(); i++ {
 		sigParam := sig.Params().At(i)
 		lhsName := fmt.Sprintf("_ag_arg%d", i)
-		rhsType := ast.NewIdent(r.typeString(sigParam.Type(), matched.Pkg()))
+		rhsType := ast.NewIdent(r.typeString(sigParam.Type()))
 		xFuncBodyArgExprs = append(xFuncBodyArgExprs,
 			ast.NewIdent(lhsName))
 		assignStmt := &ast.AssignStmt{
@@ -183,10 +196,10 @@ func (r *rewriter) _proxy_body_XFunc(node ast.Node, matched types.Object) *ast.F
 			X:   ast.NewIdent(n.X.(*ast.Ident).Name),
 			Sel: ast.NewIdent(n.Sel.Name)}
 	default:
-		panic(log.Criticalf("impl error: %s is unexpected type: %s", n))
+		log.Fatalf("impl error: %s is unexpected type: %s", n)
 	}
-	xFuncBodyCallLhs := make([]ast.Expr, 0)
-	xFuncBodyCallLhs2 := make([]ast.Expr, 0)
+	var xFuncBodyCallLhs []ast.Expr
+	var xFuncBodyCallLhs2 []ast.Expr
 	for i := 0; i < sig.Results().Len(); i++ {
 		s := fmt.Sprintf("_ag_res%d", i)
 		xFuncBodyCallLhs = append(xFuncBodyCallLhs,
@@ -242,16 +255,15 @@ func (r *rewriter) _proxy_body_XReceiver(node ast.Node, matched types.Object) as
 		// FIXME: not sure this assertion is robust
 		xs, ok := node.(*ast.SelectorExpr)
 		if !ok {
-			panic(log.Criticalf("impl error: node=%s, recv=%s", node, sig.Recv()))
+			log.Fatalf("impl error: node=%s, recv=%s", node, sig.Recv())
 		}
 		x, ok := xs.X.(*ast.Ident)
 		if !ok {
-			panic(log.Criticalf("impl error: node=%s, recv=%s", node, sig.Recv()))
+			log.Fatalf("impl error: node=%s, recv=%s", node, sig.Recv())
 		}
 		return ast.NewIdent(x.Name)
-	} else {
-		return ast.NewIdent("nil")
 	}
+	return ast.NewIdent("nil")
 }
 
 func (r *rewriter) _proxy_body_callExpr(node ast.Node, matched types.Object, asp *types.Named) *ast.CallExpr {
@@ -311,7 +323,7 @@ func (r *rewriter) _proxy_body_callExpr(node ast.Node, matched types.Object, asp
 // _ = _ag_res
 // return
 func (r *rewriter) _proxy_body(node ast.Node, matched types.Object, asp *types.Named) *ast.BlockStmt {
-	stmts := make([]ast.Stmt, 0)
+	var stmts []ast.Stmt
 	stmts = append(stmts,
 		&ast.AssignStmt{
 			Lhs: []ast.Expr{ast.NewIdent("_ag_res")},
@@ -319,8 +331,8 @@ func (r *rewriter) _proxy_body(node ast.Node, matched types.Object, asp *types.N
 			Rhs: []ast.Expr{r._proxy_body_callExpr(node, matched, asp)}})
 
 	sig := matched.Type().(*types.Signature)
-	resAssignStmts := make([]ast.Stmt, 0)
-	resExprs := make([]ast.Expr, 0)
+	var resAssignStmts []ast.Stmt
+	var resExprs []ast.Expr
 	for i := 0; i < sig.Results().Len(); i++ {
 		sigResult := sig.Results().At(i)
 		stmt := &ast.AssignStmt{
@@ -335,7 +347,7 @@ func (r *rewriter) _proxy_body(node ast.Node, matched types.Object, asp *types.N
 							Kind:  token.INT,
 							Value: fmt.Sprintf("%d", i),
 						}},
-					Type: ast.NewIdent(r.typeString(sigResult.Type(), matched.Pkg()))}}}
+					Type: ast.NewIdent(r.typeString(sigResult.Type()))}}}
 		resAssignStmts = append(resAssignStmts, stmt)
 		resExprs = append(resExprs, ast.NewIdent(fmt.Sprintf("_ag_res%d", i)))
 	}
@@ -369,7 +381,7 @@ func (r *rewriter) _pgen_decl(matched types.Object, pdecl *ast.FuncDecl, pgenNam
 	if receiver != nil {
 		pdeclRecv := pdecl.Type.Params.List[0]
 		name := pdeclRecv.Names[0].Name
-		typ := r.typeString(receiver.Type(), matched.Pkg())
+		typ := r.typeString(receiver.Type())
 		param := &ast.Field{
 			Names: []*ast.Ident{ast.NewIdent(name)},
 			Type: &ast.ParenExpr{
@@ -436,7 +448,7 @@ func (r *rewriter) _pgen_body(matched types.Object, pdecl *ast.FuncDecl) *ast.Bl
 	params.List, results.List = pdParamsL, pdResultsL
 	funcLit.Type.Params, funcLit.Type.Results = params, results
 
-	funcLitArgs := make([]ast.Expr, 0)
+	var funcLitArgs []ast.Expr
 	for i := 0; i < len(pdecl.Type.Params.List); i++ {
 		for j := 0; j < len(pdecl.Type.Params.List[i].Names); j++ {
 			funcLitArgs = append(funcLitArgs,
@@ -491,19 +503,27 @@ func (r *rewriter) _pgen(matched types.Object, pdecl *ast.FuncDecl, pgenName str
 
 func (r *rewriter) _proxy_fix_up(node ast.Node, matched types.Object, pgenName string) ast.Expr {
 	sig := matched.Type().(*types.Signature)
-	args := make([]ast.Expr, 0)
+	var args []ast.Expr
 	if sig.Recv() != nil {
-		// FIXME: not sure this assertion is robust
+		log.Printf("recv=%s", sig.Recv())
+		_, recvIsPointer := sig.Recv().Type().Underlying().(*types.Pointer)
 		// FIXME: not sure this assertion is robust
 		xs, ok := node.(*ast.SelectorExpr)
 		if !ok {
-			panic(log.Criticalf("impl error: node=%s, recv=%s", node, sig.Recv()))
+			log.Fatalf("impl error: node=%s, recv=%s", node, sig.Recv())
 		}
 		x, ok := xs.X.(*ast.Ident)
 		if !ok {
-			panic(log.Criticalf("impl error: node=%s, recv=%s", node, sig.Recv()))
+			log.Fatalf("impl error: node=%s, recv=%s", node, sig.Recv())
 		}
-		args = append(args, ast.NewIdent(x.Name))
+		var arg ast.Expr
+		if recvIsPointer {
+			// FIXME: I believe this is not robust
+			arg = ast.NewIdent("&" + x.Name)
+		} else {
+			arg = ast.NewIdent(x.Name)
+		}
+		args = append(args, arg)
 	}
 	callExpr := &ast.CallExpr{
 		Fun:  ast.NewIdent(pgenName),
@@ -523,7 +543,7 @@ func (r *rewriter) proxy(node ast.Node, pointcut aspect.Pointcut) ast.Expr {
 	case *ast.SelectorExpr:
 		id = n.Sel
 	default:
-		panic(log.Criticalf("impl error: %s is unexpected type: %s", n))
+		log.Fatalf("impl error: %s is unexpected type: %s", n)
 	}
 	// alreadyGen, ok := r.proxyExprs[id]
 	// if ok {
@@ -532,16 +552,16 @@ func (r *rewriter) proxy(node ast.Node, pointcut aspect.Pointcut) ast.Expr {
 
 	matched, ok := r.Matched[id]
 	if !ok {
-		panic(log.Criticalf("impl error: obj not found for id %s", id))
+		log.Fatalf("impl error: obj not found for id %s", id)
 	}
 	asp, ok := r.Aspects[pointcut]
 	if !ok {
-		panic(log.Criticalf("impl error: asp %s not found for pointcut %s", asp, pointcut))
+		log.Fatalf("impl error: asp %s not found for pointcut %s", asp, pointcut)
 	}
 
 	proxyName := fmt.Sprintf("_ag_proxy_%d", gRewriterLastP)
 	pgenName := fmt.Sprintf("_ag_pgen%s", proxyName)
-	gRewriterLastP += 1
+	gRewriterLastP++
 
 	proxyAst := r._proxy(node, matched, proxyName, asp)
 	r.fileAddendum = append(r.fileAddendum, proxyAst)
@@ -563,7 +583,7 @@ func (r *rewriter) Rewrite(node ast.Node) (ast.Node, rewrite.Rewriter) {
 				Name: ast.NewIdent("aspectrt"),
 				Path: &ast.BasicLit{
 					Kind:  token.STRING,
-					Value: "\"golang.org/x/exp/aspectgo/aspect/rt\"",
+					Value: "\"" + consts.AspectGoPackagePath + "/aspect/rt\"",
 				}},
 			&ast.ImportSpec{
 				Path: &ast.BasicLit{
@@ -604,11 +624,16 @@ nop:
 	return node, r
 }
 
-func (r *rewriter) AddendumForLastASTFile() []ast.Node {
+func (r *rewriter) AddendumForASTFile() []ast.Node {
 	return r.fileAddendum
 }
 
-func (r *rewriter) typeString(typ types.Type, pkg *types.Package) string {
-	return types.TypeString(typ,
-		types.RelativeTo(pkg))
+func (r *rewriter) typeString(typ types.Type) string {
+	s, err := util.LocalTypeString(typ,
+		r.currentPkg,
+		r.currentFile.Imports)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return s
 }

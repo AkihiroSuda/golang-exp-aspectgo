@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"go/ast"
 	"go/format"
+	"log"
 	"os"
 	"path/filepath"
 
-	log "github.com/cihub/seelog"
 	rewrite "github.com/tsuna/gorewrite"
+
 	"golang.org/x/tools/go/loader"
 
 	"golang.org/x/exp/aspectgo/compiler/consts"
@@ -43,7 +44,7 @@ func rewriteAspectFile(wovenGOPATH string, af *parse.AspectFile) ([]string, erro
 	defer outFile.Close()
 
 	// rewrite
-	log.Infof("Rewriting aspect file %s --> %s", af.Filename, outFilename)
+	log.Printf("Rewriting aspect file %s --> %s", af.Filename, outFilename)
 	rw := &aspectFileRewriter{
 		Program: af.Program,
 	}
@@ -67,7 +68,7 @@ func (r *aspectFileRewriter) Rewrite(node ast.Node) (ast.Node, rewrite.Rewriter)
 	case *ast.File:
 		oldName := n.Name.Name
 		if oldName != "main" {
-			panic(log.Errorf("why not main? this is unexpected and critical: %s: %v", oldName, n))
+			log.Fatalf("impl error: why not main? this is unexpected and critical: %s: %v", oldName, n)
 		}
 		newName := "agaspect"
 		rewritten := *n
