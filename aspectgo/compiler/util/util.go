@@ -2,7 +2,10 @@
 package util
 
 import (
+	"bufio"
+	"bytes"
 	"go/ast"
+	"go/token"
 	"go/types"
 	"path/filepath"
 	"strings"
@@ -39,4 +42,17 @@ func LocalTypeString(typ types.Type, pkg *types.Package, imports []*ast.ImportSp
 	}
 	// no import spec matched. this is expected for built-in types.
 	return full, nil
+}
+
+// ASTDebugString returns a debug string for the AST node.
+func ASTDebugString(node ast.Node) string {
+	var b bytes.Buffer
+	w := bufio.NewWriter(&b)
+	err := ast.Fprint(w, token.NewFileSet(), node, nil)
+	if err != nil {
+		return err.Error()
+	}
+	w.Flush()
+	s := string(b.Bytes())
+	return "\n" + s
 }

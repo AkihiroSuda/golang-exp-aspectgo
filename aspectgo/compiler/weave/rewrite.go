@@ -49,7 +49,10 @@ func rewriteProgram(wovenGOPATH string, rw *rewriter) ([]string, error) {
 			rewritten := rewrite.Rewrite(rw, file)
 			outw := bufio.NewWriter(outf)
 			outw.Write([]byte(consts.AutogenFileHeader))
-			format.Node(outw, rw.Program.Fset, rewritten)
+			err = format.Node(outw, rw.Program.Fset, rewritten)
+			if err != nil {
+				return nil, err
+			}
 			for _, add := range rw.AddendumForASTFile() {
 				outw.Write([]byte("\n"))
 				format.Node(outw, rw.Program.Fset, add)
@@ -64,7 +67,13 @@ func rewriteProgram(wovenGOPATH string, rw *rewriter) ([]string, error) {
 
 var gRewriterLastP = 0
 
-// rewriter implements rewrite.Rewriter
+// rewriter implements rewrite.Rewriter.
+// usage:
+//  Step 1: instatiate rewriter and call rewriter.init().
+//  Step 2: set rewriter.currentPkg, for each pkg in the program
+//  Step 3: set rewriter.currentFile, for each file in the pkg
+//  Step 4: call rewrite.Rewrite(rewriter, rewriter.currentFile) for rewriting the file
+//  Step 5: call rewriter.AddendumForAstFile() for getting the addendum for the file
 type rewriter struct {
 	Program          *loader.Program
 	Matched          map[*ast.Ident]types.Object
@@ -101,7 +110,8 @@ func voidIntfArrayExpr() *ast.ArrayType {
 		}}
 }
 
-// _proxy_decl generates _ag_proxy_func decl.
+// _proxy_decl generates _ag_proxy_func decl like this:
+// `func _ag_proxy_0(s string)`
 func (r *rewriter) _proxy_decl(node ast.Node, matched types.Object, proxyName string) *ast.FuncDecl {
 	sig := matched.Type().(*types.Signature)
 	funcDecl := &ast.FuncDecl{}
@@ -110,17 +120,8 @@ func (r *rewriter) _proxy_decl(node ast.Node, matched types.Object, proxyName st
 	params, results := &ast.FieldList{}, &ast.FieldList{}
 	params.List, results.List = make([]*ast.Field, 0), make([]*ast.Field, 0)
 	if sig.Recv() != nil {
-		// FIXME: not sure this assertion is robust
-		xs, ok := node.(*ast.SelectorExpr)
-		if !ok {
-			log.Fatalf("impl error: node=%s, recv=%s", node, sig.Recv())
-		}
-		x, ok := xs.X.(*ast.Ident)
-		if !ok {
-			log.Fatalf("impl error: node=%s, recv=%s", node, sig.Recv())
-		}
 		param := &ast.Field{
-			Names: []*ast.Ident{ast.NewIdent(x.Name)},
+			Names: []*ast.Ident{ast.NewIdent("_ag_recv")},
 			Type: &ast.ParenExpr{
 				X: ast.NewIdent(r.typeString(sig.Recv().Type())),
 			}}
@@ -148,7 +149,8 @@ func (r *rewriter) _proxy_decl(node ast.Node, matched types.Object, proxyName st
 	return funcDecl
 }
 
-// _proxy_body_XArgs generates like this: `XArgs: []interface{}{"world"}`
+// _proxy_body_XArgs generates like this:
+// `XArgs: []interface{}{"world"}`
 func (r *rewriter) _proxy_body_XArgs(matched types.Object) []ast.Expr {
 	sig := matched.Type().(*types.Signature)
 	var xArgsExprs []ast.Expr
@@ -160,6 +162,13 @@ func (r *rewriter) _proxy_body_XArgs(matched types.Object) []ast.Expr {
 	return xArgsExprs
 }
 
+// _proxy_body_XFunc generates like this:
+// `XFunc: func(_ag_args []interface{}) []interface {} {
+//                _ag_arg0 := _ag_args[0].(string)
+//                sayHello(_ag_arg0)
+//                _ag_res := []interface{}{}
+//                return _ag_res
+//          }`
 func (r *rewriter) _proxy_body_XFunc(node ast.Node, matched types.Object) *ast.FuncLit {
 	sig := matched.Type().(*types.Signature)
 	var xFuncBodyStmts []ast.Stmt
@@ -192,11 +201,18 @@ func (r *rewriter) _proxy_body_XFunc(node ast.Node, matched types.Object) *ast.F
 	case *ast.Ident:
 		xFuncBodyCallFuncExp = ast.NewIdent(n.Name)
 	case *ast.SelectorExpr:
+		var x ast.Expr
+		if sig.Recv() != nil {
+			x = ast.NewIdent("_ag_recv")
+		} else {
+			// FIXME FIXME FIXME: copy n.X
+			x = n.X
+		}
 		xFuncBodyCallFuncExp = &ast.SelectorExpr{
-			X:   ast.NewIdent(n.X.(*ast.Ident).Name),
+			X:   x,
 			Sel: ast.NewIdent(n.Sel.Name)}
 	default:
-		log.Fatalf("impl error: %s is unexpected type: %s", n)
+		log.Fatalf("impl error: %s is unexpected type: %s", util.ASTDebugString(n))
 	}
 	var xFuncBodyCallLhs []ast.Expr
 	var xFuncBodyCallLhs2 []ast.Expr
@@ -252,16 +268,7 @@ func (r *rewriter) _proxy_body_XReceiver(node ast.Node, matched types.Object) as
 	sig := matched.Type().(*types.Signature)
 	recv := sig.Recv()
 	if recv != nil {
-		// FIXME: not sure this assertion is robust
-		xs, ok := node.(*ast.SelectorExpr)
-		if !ok {
-			log.Fatalf("impl error: node=%s, recv=%s", node, sig.Recv())
-		}
-		x, ok := xs.X.(*ast.Ident)
-		if !ok {
-			log.Fatalf("impl error: node=%s, recv=%s", node, sig.Recv())
-		}
-		return ast.NewIdent(x.Name)
+		return ast.NewIdent("_ag_recv")
 	}
 	return ast.NewIdent("nil")
 }
@@ -504,24 +511,27 @@ func (r *rewriter) _pgen(matched types.Object, pdecl *ast.FuncDecl, pgenName str
 func (r *rewriter) _proxy_fix_up(node ast.Node, matched types.Object, pgenName string) ast.Expr {
 	sig := matched.Type().(*types.Signature)
 	var args []ast.Expr
-	if sig.Recv() != nil {
-		log.Printf("recv=%s", sig.Recv())
-		_, recvIsPointer := sig.Recv().Type().Underlying().(*types.Pointer)
-		// FIXME: not sure this assertion is robust
+	recv := sig.Recv()
+	if recv != nil {
+		_, recvIsPointer := recv.Type().Underlying().(*types.Pointer)
+
 		xs, ok := node.(*ast.SelectorExpr)
 		if !ok {
-			log.Fatalf("impl error: node=%s, recv=%s", node, sig.Recv())
+			log.Fatalf("impl error: node=%s, recv=%s", util.ASTDebugString(node), recv)
 		}
-		x, ok := xs.X.(*ast.Ident)
-		if !ok {
-			log.Fatalf("impl error: node=%s, recv=%s", node, sig.Recv())
-		}
+		typesInfo := r.Program.AllPackages[r.currentPkg]
+		xTypeInfo := typesInfo.Types[xs.X.(ast.Expr)]
+		_, xIsPointer := xTypeInfo.Type.Underlying().(*types.Pointer)
+
+		// FIXME FIXME FIXME: copy xs.X
+		x := xs.X
 		var arg ast.Expr
-		if recvIsPointer {
-			// FIXME: I believe this is not robust
-			arg = ast.NewIdent("&" + x.Name)
+		if recvIsPointer && !xIsPointer {
+			arg = &ast.UnaryExpr{
+				Op: token.AND,
+				X:  x}
 		} else {
-			arg = ast.NewIdent(x.Name)
+			arg = x
 		}
 		args = append(args, arg)
 	}
@@ -535,6 +545,13 @@ func (r *rewriter) _proxy_fix_up(node ast.Node, matched types.Object, pgenName s
 	return parenExpr
 }
 
+// proxy generates addendum and returns new ast.Expr for the node.
+// generated addendum can be obtained via AddendumForASTFile.
+//
+// How it works:
+//   Step 1: calls _proxy for generating _ag_proxy_N addendum
+//   Step 2: calls _pgen for generating _ag_pgen_ag_proxy_N addendum
+//   Step 3: calls _proxy_fix_up for generating the new node
 func (r *rewriter) proxy(node ast.Node, pointcut aspect.Pointcut) ast.Expr {
 	var id *ast.Ident
 	switch n := node.(type) {
@@ -543,7 +560,7 @@ func (r *rewriter) proxy(node ast.Node, pointcut aspect.Pointcut) ast.Expr {
 	case *ast.SelectorExpr:
 		id = n.Sel
 	default:
-		log.Fatalf("impl error: %s is unexpected type: %s", n)
+		log.Fatalf("impl error: %s is unexpected type: %s", util.ASTDebugString(n))
 	}
 	// alreadyGen, ok := r.proxyExprs[id]
 	// if ok {
