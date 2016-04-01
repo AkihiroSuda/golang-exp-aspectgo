@@ -90,7 +90,6 @@ func main() {
 
 You can also execute other examples as follows:
 
-
     $ go test -v golang.org/x/exp/aspectgo/example
 
 If the output is hard to read, please add the `-parallel 1` flag to `go test`.

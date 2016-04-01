@@ -105,6 +105,10 @@ func TestExReceiver(t *testing.T) {
 	testEx(t, "receiver", "main.go", "main_aspect.go")
 }
 
+func TestExReceiver2(t *testing.T) {
+	testEx(t, "receiver2", "main.go", "main_aspect.go")
+}
+
 func TestExMultipointcut(t *testing.T) {
 	testEx(t, "multipointcut", "main.go", "main_aspect.go")
 }
