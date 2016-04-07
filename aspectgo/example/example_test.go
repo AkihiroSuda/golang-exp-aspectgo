@@ -104,6 +104,10 @@ func TestExHello2(t *testing.T) {
 	testEx(t, "hello2", "main.go", "main_aspect.go", false)
 }
 
+func TestExHello3(t *testing.T) {
+	testEx(t, "hello3", "main.go", "main_aspect.go", false)
+}
+
 func TestExReceiver(t *testing.T) {
 	testEx(t, "receiver", "main.go", "main_aspect.go", false)
 }
