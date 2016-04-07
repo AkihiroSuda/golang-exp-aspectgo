@@ -132,9 +132,6 @@ func (r *rewriter) _proxy_decl(node ast.Node, matched types.Object, proxyName st
 		param := &ast.Field{}
 		param.Names = []*ast.Ident{ast.NewIdent(sigParam.Name())}
 		paramTypeStr := r.typeString(sigParam.Type())
-		if sig.Variadic() {
-			paramTypeStr = strings.Replace(paramTypeStr, "[]", "...", 1)
-		}
 		param.Type = ast.NewIdent(paramTypeStr)
 		params.List = append(params.List, param)
 	}
@@ -177,8 +174,13 @@ func (r *rewriter) _proxy_body_XFunc(node ast.Node, matched types.Object) *ast.F
 		sigParam := sig.Params().At(i)
 		lhsName := fmt.Sprintf("_ag_arg%d", i)
 		rhsType := ast.NewIdent(r.typeString(sigParam.Type()))
-		xFuncBodyArgExprs = append(xFuncBodyArgExprs,
-			ast.NewIdent(lhsName))
+		if i == sig.Params().Len()-1 && sig.Variadic() {
+			xFuncBodyArgExprs = append(xFuncBodyArgExprs,
+				ast.NewIdent(lhsName+"..."))
+		} else {
+			xFuncBodyArgExprs = append(xFuncBodyArgExprs,
+				ast.NewIdent(lhsName))
+		}
 		assignStmt := &ast.AssignStmt{
 			Lhs: []ast.Expr{
 				ast.NewIdent(lhsName),
@@ -402,8 +404,13 @@ func (r *rewriter) _pgen_decl(matched types.Object, pdecl *ast.FuncDecl, pgenNam
 		pdParamScanBegin = 1
 	}
 	for i := pdParamScanBegin; i < len(pdecl.Type.Params.List); i++ {
+		typIdent := pdecl.Type.Params.List[i].Type.(*ast.Ident)
+		typ := typIdent.Name
+		if sig.Variadic() && i == len(pdecl.Type.Params.List)-1 {
+			typ = strings.Replace(typ, "[]", "...", 1)
+		}
 		pdParam := &ast.Field{
-			Type: pdecl.Type.Params.List[i].Type,
+			Type: ast.NewIdent(typ),
 		}
 		pdParamsL = append(pdParamsL, pdParam)
 	}
@@ -439,9 +446,14 @@ func (r *rewriter) _pgen_body(matched types.Object, pdecl *ast.FuncDecl) *ast.Bl
 		pdParamScanBegin = 1
 	}
 	for i := pdParamScanBegin; i < len(pdecl.Type.Params.List); i++ {
+		typIdent := pdecl.Type.Params.List[i].Type.(*ast.Ident)
+		typ := typIdent.Name
+		if sig.Variadic() && i == len(pdecl.Type.Params.List)-1 {
+			typ = strings.Replace(typ, "[]", "...", 1)
+		}
 		pdParam := &ast.Field{
 			Names: pdecl.Type.Params.List[i].Names,
-			Type:  pdecl.Type.Params.List[i].Type,
+			Type:  ast.NewIdent(typ),
 		}
 		pdParamsL = append(pdParamsL, pdParam)
 	}
