@@ -29,9 +29,12 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func execAspectGo(t *testing.T, wovenGOPATH, pkg, aspectFileBasename string) error {
+func execAspectGo(t *testing.T, wovenGOPATH, pkg, aspectFileBasename string, recursive bool) error {
 	pkgDir := filepath.Join(GOPATH, filepath.Join("src", pkg))
 	aspectFilename := filepath.Join(pkgDir, aspectFileBasename)
+	if recursive {
+		pkg += "/..."
+	}
 	args := []string{"aspectgo", "-w", wovenGOPATH, "-t", pkg}
 	if testing.Verbose() {
 		args = append(args, "-debug=true")
@@ -61,7 +64,7 @@ func execMainWithGOPATH(t *testing.T, gopath, pkg, mainFileBasename string) ([]b
 // textEx returns the output of the original test and the woven test suite if succeeds.
 // the output contains stderr.
 // if the woven test or aspectgo itself fails, testEx panics.
-func testEx(t *testing.T, dirname, mainFileBasename, aspectFileBasename string) ([]byte, []byte) {
+func testEx(t *testing.T, dirname, mainFileBasename, aspectFileBasename string, recursive bool) ([]byte, []byte) {
 	t.Parallel()
 	pkg := filepath.Join(exPackage, dirname)
 	out1, err := execMainWithGOPATH(t, "", pkg, mainFileBasename)
@@ -74,7 +77,7 @@ func testEx(t *testing.T, dirname, mainFileBasename, aspectFileBasename string) 
 		t.Fatal(err)
 	}
 
-	err = execAspectGo(t, wovenGOPATH, pkg, aspectFileBasename)
+	err = execAspectGo(t, wovenGOPATH, pkg, aspectFileBasename, recursive)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,25 +97,33 @@ func testEx(t *testing.T, dirname, mainFileBasename, aspectFileBasename string) 
 }
 
 func TestExHello(t *testing.T) {
-	testEx(t, "hello", "main.go", "main_aspect.go")
+	testEx(t, "hello", "main.go", "main_aspect.go", false)
 }
 
 func TestExHello2(t *testing.T) {
-	testEx(t, "hello2", "main.go", "main_aspect.go")
+	testEx(t, "hello2", "main.go", "main_aspect.go", false)
+}
+
+func TestExHello3(t *testing.T) {
+	testEx(t, "hello3", "main.go", "main_aspect.go", false)
 }
 
 func TestExReceiver(t *testing.T) {
-	testEx(t, "receiver", "main.go", "main_aspect.go")
+	testEx(t, "receiver", "main.go", "main_aspect.go", false)
 }
 
 func TestExReceiver2(t *testing.T) {
-	testEx(t, "receiver2", "main.go", "main_aspect.go")
+	testEx(t, "receiver2", "main.go", "main_aspect.go", false)
 }
 
 func TestExMultipointcut(t *testing.T) {
-	testEx(t, "multipointcut", "main.go", "main_aspect.go")
+	testEx(t, "multipointcut", "main.go", "main_aspect.go", false)
 }
 
 func TestExDetreplay(t *testing.T) {
-	testEx(t, "detreplay", "main.go", "main_aspect.go")
+	testEx(t, "detreplay", "main.go", "main_aspect.go", false)
+}
+
+func TestExRecursive(t *testing.T) {
+	testEx(t, "recursive", "main.go", "main_aspect.go", true)
 }
