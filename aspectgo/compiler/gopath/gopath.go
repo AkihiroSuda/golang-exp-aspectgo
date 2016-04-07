@@ -9,12 +9,24 @@ import (
 	"strings"
 )
 
-// FileForNewGOPATH returns the path for new wovenGOPATH.
+// FileForNewGOPATH returns the path for new wovenGOPATH (s/oldGOPATH/wovenGOPATH).
 func FileForNewGOPATH(s, oldGOPATH, wovenGOPATH string) (*os.File, error) {
 	n := strings.Replace(s, oldGOPATH, wovenGOPATH, 1)
 	d := filepath.Dir(n)
-	if err := os.MkdirAll(d, 0755); err != nil {
-		return nil, err
+	dexists, _ := exists(d)
+	if !dexists {
+		if err := os.MkdirAll(d, 0755); err != nil {
+			return nil, err
+		}
+	}
+	nexists, _ := exists(n)
+	if nexists {
+		// n may be existing symlink.
+		// we remove symlink here to avoid overwriting.
+		// even if n is non-symlink, it's OK to remove here.
+		if err := os.Remove(n); err != nil {
+			return nil, err
+		}
 	}
 	return os.Create(n)
 }
