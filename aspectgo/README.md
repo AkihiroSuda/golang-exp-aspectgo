@@ -21,7 +21,7 @@ Your suggestion and PR are welcome.
 
     $ git clone https://github.com/AkihiroSuda/golang-exp-aspectgo.git
     $ ln -s $(pwd)/golang-exp-aspectgo $GOPATH/src/golang.org/x/exp
-    $ go build golang.org/x/exp/aspectgo
+    $ go build golang.org/x/exp/aspectgo/cmd/aspectgo
 
 ## Example
 
