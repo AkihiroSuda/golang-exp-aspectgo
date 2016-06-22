@@ -114,3 +114,4 @@ If the output is hard to read, please add the `-parallel 1` flag to `go test`.
  * [github.com/deferpanic/goweave](https://github.com/deferpanic/goweave)
  * [github.com/gogap/aop](https://github.com/gogap/aop)
  * [golang.org/x/tools/refactor/eg](https://github.com/golang/tools/blob/master/refactor/eg/eg.go) (Not AOP, but has some similarity)
+ * [github.com/coreos/gofail](https://github.com/coreos/gofail) (ditto)
