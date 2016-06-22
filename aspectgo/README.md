@@ -1,3 +1,7 @@
+Moved to https://github.com/AkihiroSuda/aspectgo
+
+------------------------------
+
 # AspectGo: AOP Framework for Go
 
 AspectGo is an AOP framework for Go.
